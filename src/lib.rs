@@ -692,6 +692,61 @@ impl PIDController {
         (thrust, desired_orientation)
     }
 }
+
+/// A simple first order exponential low-pass filter implementation.
+/// The `LowPassFilter` struct represents a low-pass filter with a given time constant (`tau`)
+/// and the previous output value (`y_prev`).
+/// # Examples
+/// ```
+/// use peng_quad::LowPassFilter;
+/// 
+/// let mut filter = LowPassFilter::new(0.0, 0.5);
+/// assert_eq!(filter.update(2.0), 1.0);
+/// ```
+/// # Fields
+/// * `tau` - The time constant of the filter.
+/// * `y_prev` - The previous output value of the filter.
+pub struct LowPassFilter {
+    pub tau: f32,
+    pub y_prev: f32,
+}
+
+impl LowPassFilter {
+    /// Creates a new `LowPassFilter` with the given initial value and time constant.
+    /// # Arguments
+    /// * `x_0` - The initial value of the filter output.
+    /// * `tau` - The time constant of the filter. Range 0(unfiltered)->1(max filtering/delay),
+    /// # Examples
+    /// ```
+    /// use peng_quad::LowPassFilter;
+    /// 
+    /// let filter = LowPassFilter::new(0.0, 0.5);
+    /// ```
+    pub fn new(x_0: f32, tau: f32) -> Self {
+        Self {
+            tau,
+            y_prev: x_0,
+        }
+    }
+
+    /// Updates the filter with a new input value and returns the filtered output.
+    /// # Arguments
+    /// * `x` - The new input value to be filtered.
+    /// # Returns
+    /// The filtered output value.
+    /// # Examples
+    /// ```
+    /// use hello_cargo::LowPassFilter;
+    ///
+    /// let mut filter = LowPassFilter::new(0.0, 0.5);
+    /// assert_eq!(filter.update(2.0), 1.0);
+    /// ```
+    pub fn update(&mut self, x: f32) -> f32 {
+        self.y_prev = self.tau * self.y_prev + (1.0 - self.tau) * x;
+        self.y_prev
+    }
+}
+
 /// Enum representing different types of trajectory planners
 /// # Example
 /// ```
