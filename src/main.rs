@@ -1,4 +1,4 @@
-use nalgebra::Vector3;
+use nalgebra::{Vector3, Vector6};
 use peng_quad::*;
 /// Main function for the simulation
 fn main() -> Result<(), SimulationError> {
@@ -39,6 +39,13 @@ fn main() -> Result<(), SimulationError> {
         config.quadrotor.mass,
         config.quadrotor.gravity,
     );
+    let mut l1_controller= L1Controller::new(
+        &quad,
+        config.l1_controller.dia,
+        config.l1_controller.adaptation_gain,
+        1.0 / config.simulation.simulation_frequency as f32,
+    );
+
     let mut imu = Imu::new(
         config.imu.accel_noise_std,
         config.imu.gyro_noise_std,
@@ -135,6 +142,7 @@ fn main() -> Result<(), SimulationError> {
             &quad.angular_velocity,
             quad.time_step,
         );
+        // let (adapted_thrust, adapted_torque) = l1_controller.adapt(thrust, &torque);
         if i % (config.simulation.simulation_frequency / config.simulation.control_frequency) == 0 {
             if config.use_rk4_for_dynamics_control {
                 quad.update_dynamics_with_controls_rk4(thrust, &torque);

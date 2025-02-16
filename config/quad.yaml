@@ -3,6 +3,7 @@ render_depth: true # Enable rendering depth
 use_multithreading_depth_rendering: true # Enable multithreading for depth rendering for large resolution (above 32x24)
 use_rk4_for_dynamics_update: false # Enable Runge-Kutta 4th order integration for dynamics, otherwise Euler integration is used
 use_rk4_for_dynamics_control: false # Enable Runge-Kutta 4th order integration for dynamics, otherwise Euler integration is used
+l1_enabled: true
 
 max_render_threads: 8 # Maximum number of threads for rendering
 
@@ -32,6 +33,10 @@ pid_controller:
     ki: [0.0, 0.0, 0.0] # Integral gains [roll, pitch, yaw]
   pos_max_int: [10.0, 10.0, 10.0] # Maximum integral error for position control [x, y, z]
   att_max_int: [0.5, 0.5, 0.5] # Maximum integral error for attitude control [roll, pitch, yaw]
+
+l1_controller:
+  dia: [5.0, 5.0, 5.0, 10.0, 10.0, 10.0]
+  adaptation_gain: [200.0, 200.0, 200.0, 50.0, 50.0, 50.0]
 
 imu:
   accel_noise_std: 0.02 # Standard deviation of accelerometer noise (m/s^2)

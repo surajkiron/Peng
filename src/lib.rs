@@ -46,7 +46,8 @@ use rand::SeedableRng;
 use rayon::prelude::*;
 pub mod config;
 use nalgebra::{
-    DMatrix, DVector, Matrix3, Quaternion, Rotation3, SMatrix, UnitQuaternion, Vector3,
+    DMatrix, DVector, Matrix3, Quaternion, Rotation3, SMatrix, SVector, UnitQuaternion, Vector3,
+    Vector4, Vector6, VectorView4, 
 };
 use osqp::{CscMatrix, Problem, Settings};
 use rand_chacha::ChaCha8Rng;
@@ -693,39 +694,43 @@ impl PIDController {
     }
 }
 
-/// A simple first order exponential low-pass filter implementation.
-/// The `LowPassFilter` struct represents a low-pass filter with a given time constant (`tau`)
-/// and the previous output value (`y_prev`).
+/// A simple first order low-pass filter implementation.
+/// The `LowPassFilter` struct represents a low-pass filter with a given time constant (`tau`),
+/// the previous output value (`y_prev`), and the time step (`dt`).
 /// # Examples
 /// ```
 /// use peng_quad::LowPassFilter;
 /// 
-/// let mut filter = LowPassFilter::new(0.0, 0.5);
+/// let mut filter = LowPassFilter::new(0.0, 0.5, 1.0);
 /// assert_eq!(filter.update(2.0), 1.0);
 /// ```
 /// # Fields
-/// * `tau` - The time constant of the filter.
+/// * `tau` - The time constant of the filter, where the range is 0 (unfiltered) to 1 (maximum filtering/delay).
 /// * `y_prev` - The previous output value of the filter.
+/// * `dt` - The time step used for the filter update.
 pub struct LowPassFilter {
     pub tau: f32,
     pub y_prev: f32,
+    pub dt: f32,
 }
 
 impl LowPassFilter {
-    /// Creates a new `LowPassFilter` with the given initial value and time constant.
+    /// Creates a new `LowPassFilter` with the given initial value, time constant, and time step.
     /// # Arguments
     /// * `x_0` - The initial value of the filter output.
-    /// * `tau` - The time constant of the filter. Range 0(unfiltered)->1(max filtering/delay),
+    /// * `tau` - The time constant of the filter. Range from 0 (unfiltered) to 1 (maximum filtering/delay).
+    /// * `dt` - The time step used for the filter update.
     /// # Examples
     /// ```
     /// use peng_quad::LowPassFilter;
     /// 
-    /// let filter = LowPassFilter::new(0.0, 0.5);
+    /// let filter = LowPassFilter::new(0.0, 0.5, 1.0);
     /// ```
-    pub fn new(x_0: f32, tau: f32) -> Self {
+    pub fn new(x_0: f32, tau: f32, dt: f32) -> Self {
         Self {
             tau,
             y_prev: x_0,
+            dt,
         }
     }
 
@@ -736,14 +741,156 @@ impl LowPassFilter {
     /// The filtered output value.
     /// # Examples
     /// ```
-    /// use hello_cargo::LowPassFilter;
+    /// use peng_quad::LowPassFilter;
     ///
-    /// let mut filter = LowPassFilter::new(0.0, 0.5);
+    /// let mut filter = LowPassFilter::new(0.0, 0.5, 1.0);
     /// assert_eq!(filter.update(2.0), 1.0);
     /// ```
     pub fn update(&mut self, x: f32) -> f32 {
-        self.y_prev = self.tau * self.y_prev + (1.0 - self.tau) * x;
-        self.y_prev
+        let y_curr = (1.0 - self.dt / self.tau) * self.y_prev + (self.dt / self.tau) * x;
+        self.y_prev = y_curr;
+        y_curr
+    }
+}
+
+
+pub struct L1Controller<'a> {
+    /// Quadrotor Model
+    quadrotor: &'a Quadrotor,
+    /// Predicted state
+    sigma: Vector6<f32>,
+    /// 
+    predicted_partial_state_z: Vector6<f32>,
+    /// L1 adaptation thrust and torques  required???
+    pub u_l1: Vector4<f32>,
+    /// Gains
+    pub As: DMatrix<f32>,
+    /// Adaptation Gain
+    pub adaptation_gain: DMatrix<f32>,
+    /// dt
+    pub dt: f32,
+    thrust_lpf:  LowPassFilter,
+    torquex_lpf: LowPassFilter,
+    torquey_lpf: LowPassFilter,
+    torquez_lpf: LowPassFilter,
+}
+impl <'a>L1Controller<'a> {
+    pub fn new(quadrotor: &'a Quadrotor, 
+    _dia: [f32; 6], 
+    _adaptation_gain: [f32; 6], 
+    dt: f32) -> Self {
+    let _dia_vec = DVector::from_vec(_dia.to_vec());
+    let adaptation_gain_vec = DVector::from_vec(_adaptation_gain.to_vec());
+        
+        Self {
+            quadrotor,
+            sigma: Vector6::zeros(),
+            u_l1: Vector4::zeros(),
+            predicted_partial_state_z: Vector6::zeros(),
+            As: DMatrix::from_diagonal(&_dia_vec),  // Initialize As with diagonal from dia
+            adaptation_gain: DMatrix::from_diagonal(&adaptation_gain_vec),  
+            dt,
+            thrust_lpf:  LowPassFilter::new(0.0, 0.3, dt),
+            torquex_lpf: LowPassFilter::new(0.0, 0.3, dt),
+            torquey_lpf: LowPassFilter::new(0.0, 0.3, dt),    
+            torquez_lpf: LowPassFilter::new(0.0, 0.3, dt),
+        }
+        
+    }
+
+    pub fn adapt(
+        &mut self,
+        thrust: f32,    
+        torque: &Vector3<f32>, 
+        ) -> (f32, Vector3<f32>) {
+
+        // State Predictor
+        let current_rotation = self.quadrotor.orientation.to_rotation_matrix();
+        let rotation_matrix = current_rotation.matrix();
+        let mut sigma_m = Vector4::new(self.sigma[0],self.sigma[1], self.sigma[2], self.sigma[3]);
+        let sigma_um = DVector::<f32>::from_row_slice(&[self.sigma[4], self.sigma[5]]);
+        let gravity_term = Vector3::new(0.0, 0.0, -self.quadrotor.gravity); 
+        let torque_term = -self.quadrotor.inertia_matrix_inv * self.quadrotor.angular_velocity.cross(&(self.quadrotor.inertia_matrix * self.quadrotor.angular_velocity));
+
+        let fk = Vector6::new(gravity_term.x, gravity_term.y, gravity_term.z, 
+            torque_term.x, torque_term.y, torque_term.z);
+        // let fk = SVector::<f32, 6>::from_columns(&[gravity_term as SVector::<f32, 3>, torque_term]);
+        
+        let u = Vector4::new(thrust, torque.x, torque.y, torque.z);
+
+        // Create zero matrices;
+        let mut b = SMatrix::<f32, 6, 4>::zeros();
+        let mut b_um = SMatrix::<f32, 6, 2>::zeros();
+        
+        let unmodeled_force = (1.0 / self.quadrotor.mass) * rotation_matrix;
+        
+        // Fill first three rows of B with third column of unmodeled_force (body z direction)
+        b.fixed_view_mut::<3, 1>(0, 0).copy_from(&unmodeled_force.column(2));
+
+        // Fill bottom-right 3x3 block with J_inv
+        b.fixed_view_mut::<3, 3>(3, 1).copy_from(&self.quadrotor.inertia_matrix_inv);
+
+        // Fill B_um with first two columns of unmodeled_force (body x and y directions)
+        b_um.fixed_view_mut::<3, 1>(0, 0).copy_from(&unmodeled_force.column(0));
+        b_um.fixed_view_mut::<3, 1>(0, 1).copy_from(&unmodeled_force.column(1));
+
+        // Concatenate velocity and omega into z
+        let partial_state_z = SVector::<f32, 6>::new(
+            self.quadrotor.velocity[0],
+            self.quadrotor.velocity[1],
+            self.quadrotor.velocity[2],
+            self.quadrotor.angular_velocity[0],
+            self.quadrotor.angular_velocity[1],
+            self.quadrotor.angular_velocity[2]
+        );
+
+        // Calculate z_error
+        let z_prediction_error = self.predicted_partial_state_z - partial_state_z;
+
+        
+        // Calculate z_update
+        let new_prediction = self.predicted_partial_state_z + (
+            fk + 
+            b * (u - self.u_l1 + sigma_m) + 
+            (b_um * sigma_um) + 
+            &self.As * z_prediction_error
+        ) * self.dt;
+
+        // Update prediction for next iteration
+        self.predicted_partial_state_z = new_prediction;
+        // TODO output predicted state
+
+
+        // L1 Adaptation
+        let mut gk_inv_ = SMatrix::<f32, 6, 6>::zeros();
+        let mx = self.quadrotor.mass * rotation_matrix;   
+
+        // Set the values for gk_inv_ using fixed_view_mut to access sub-blocks
+        gk_inv_.fixed_view_mut::<1, 3>(0, 0).copy_from(&mx.row(2)); 
+        gk_inv_.fixed_view_mut::<1, 3>(4, 0).copy_from(&mx.row(0)); 
+        gk_inv_.fixed_view_mut::<1, 3>(5, 0).copy_from(&mx.row(1)); 
+
+        // Assigning parts of J_ matrix to the corresponding parts of gk_inv_
+        gk_inv_.fixed_view_mut::<3, 1>(1, 3).copy_from(&self.quadrotor.inertia_matrix.column(0)); // Row 0 of J_
+        gk_inv_.fixed_view_mut::<3, 1>(1, 4).copy_from(&self.quadrotor.inertia_matrix.column(1)); // Row 1 of J_
+        gk_inv_.fixed_view_mut::<3, 1>(1, 5).copy_from(&self.quadrotor.inertia_matrix.column(2)); // Row 2 of J_ 
+        
+        self.sigma = - gk_inv_ * &self.adaptation_gain * (new_prediction-self.predicted_partial_state_z);
+        sigma_m = Vector4::new(
+            self.thrust_lpf.update(self.sigma[0]),
+            self.torquex_lpf.update(self.sigma[1]),
+            self.torquey_lpf.update(self.sigma[2]),
+            self.torquez_lpf.update(self.sigma[3]),
+        ); 
+        self.u_l1 = sigma_m;
+        
+        let control_thrust: f32 = thrust - self.u_l1[0];
+        let control_torque= Vector3::new(
+            torque[0] - self.u_l1[1],
+            torque[1] - self.u_l1[2],
+            torque[2] - self.u_l1[3],
+        );
+        (control_thrust, control_torque)
     }
 }
 

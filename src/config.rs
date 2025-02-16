@@ -12,6 +12,8 @@ pub struct Config {
     pub quadrotor: QuadrotorConfig,
     /// PID Controller configuration
     pub pid_controller: PIDControllerConfig,
+    /// L1 Controller configuration
+    pub l1_controller: L1ControllerConfig,
     /// IMU configuration
     pub imu: ImuConfig,
     /// Maze configuration
@@ -36,6 +38,8 @@ pub struct Config {
     pub use_rk4_for_dynamics_control: bool,
     /// Use RK4 for updating quadrotor dynamics without controls
     pub use_rk4_for_dynamics_update: bool,
+    /// Enable L1 Controller
+    pub l1_enabled: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -86,6 +90,13 @@ pub struct PIDControllerConfig {
     pub pos_max_int: [f32; 3],
     /// Maximum integral error for attitude control
     pub att_max_int: [f32; 3],
+}
+
+#[derive(serde::Deserialize)]
+/// Configuration for the L1 Controller
+pub struct L1ControllerConfig {
+    pub dia: [f32;6],
+    pub adaptation_gain: [f32;6],
 }
 
 #[derive(serde::Deserialize)]
