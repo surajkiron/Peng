@@ -709,9 +709,9 @@ impl PIDController {
 /// * `y_prev` - The previous output value of the filter.
 /// * `dt` - The time step used for the filter update.
 pub struct LowPassFilter {
-    pub tau: f32,
-    pub y_prev: f32,
-    pub dt: f32,
+    tau: f32,
+    y_prev: f32,
+    dt: f32,
 }
 
 impl LowPassFilter {
@@ -760,15 +760,17 @@ pub struct L1Controller {
     gravity: f32,
     inertia_matrix: Matrix3<f32>, 
     inertia_matrix_inv: Matrix3<f32>,
-    pub dt: f32,
-    /// Predicted state
+    dt: f32,
+    /// Predicted Uncertainties [thrust.z, torque.x, torque.y, torque.z, thrust.y, thrust.z]
     sigma: Vector6<f32>,
+    /// Partial state [velocity, angular_velocity]
     predicted_partial_state_z: Vector6<f32>,
-    /// L1 adaptation thrust and torques  required???
-    pub u_l1: Vector4<f32>,
-    /// Gains
-    pub hurwitz_mat: DMatrix<f32>,
-    pub adaptation_gain_mat: DMatrix<f32>,
+    /// L1 adaptation [thrust.z, torque.x, torque.y, torquez.z]
+    u_l1: Vector4<f32>,
+    /// Hurwitz matrix drives prediction error to zero exponetially fast
+    hurwitz_mat: DMatrix<f32>,
+    /// L1 Gains
+    adaptation_gain_mat: DMatrix<f32>,
     /// Low Pass Filters
     thrust_lpf:  LowPassFilter,
     torquex_lpf: LowPassFilter,
@@ -822,7 +824,7 @@ impl L1Controller {
         current_velocity: &Vector3<f32>, 
         current_angular_velocity:&Vector3<f32>, 
         ) -> (f32, Vector3<f32>) {
-            
+
         // State Predictor
         let current_rotation = current_orientation.to_rotation_matrix();
         let rotation_matrix = current_rotation.matrix();
@@ -862,20 +864,16 @@ impl L1Controller {
 
         // Calculate z_error
         let z_prediction_error = self.predicted_partial_state_z - partial_state_z;
-
-        
         // Calculate z_update
         let new_prediction = self.predicted_partial_state_z + (
             fk + 
-            b * (u - self.u_l1 + sigma_m) + 
+            b * (u + self.u_l1 + sigma_m) + 
             (b_um * sigma_um) + 
             &self.hurwitz_mat * z_prediction_error
         ) * self.dt;
 
         // Update prediction for next iteration
         self.predicted_partial_state_z = new_prediction;
-        // TODO output predicted state
-
 
         // L1 Adaptation
         let mut gk_inv_ = SMatrix::<f32, 6, 6>::zeros();
@@ -886,7 +884,7 @@ impl L1Controller {
         gk_inv_.fixed_view_mut::<1, 3>(4, 0).copy_from(&mx.column(0).transpose()); 
         gk_inv_.fixed_view_mut::<1, 3>(5, 0).copy_from(&mx.column(1).transpose()); 
 
-        // Assigning parts of J_ matrix to the corresponding parts of gk_inv_
+        // Assigning parts of inertia matrix to the corresponding parts of gk_inv_
         gk_inv_.fixed_view_mut::<3, 1>(1, 3).copy_from(&self.inertia_matrix.column(0)); 
         gk_inv_.fixed_view_mut::<3, 1>(1, 4).copy_from(&self.inertia_matrix.column(1)); 
         gk_inv_.fixed_view_mut::<3, 1>(1, 5).copy_from(&self.inertia_matrix.column(2));  
@@ -898,13 +896,13 @@ impl L1Controller {
             self.torquey_lpf.update(self.sigma[2]).expect("REASON"),
             self.torquez_lpf.update(self.sigma[3]).expect("REASON"),
         ); 
-        self.u_l1 = sigma_m;
+        self.u_l1 = -sigma_m;
         
-        let control_thrust: f32 = thrust - self.u_l1[0];
+        let control_thrust: f32 = thrust + self.u_l1[0];
         let control_torque= Vector3::new(
-            torque[0] - self.u_l1[1],
-            torque[1] - self.u_l1[2],
-            torque[2] - self.u_l1[3],
+            torque[0] + self.u_l1[1],
+            torque[1] + self.u_l1[2],
+            torque[2] + self.u_l1[3],
         );
         (control_thrust, control_torque)
     }

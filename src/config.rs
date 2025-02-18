@@ -38,8 +38,6 @@ pub struct Config {
     pub use_rk4_for_dynamics_control: bool,
     /// Use RK4 for updating quadrotor dynamics without controls
     pub use_rk4_for_dynamics_update: bool,
-    /// Enable L1 Controller
-    pub l1_enabled: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -95,9 +93,15 @@ pub struct PIDControllerConfig {
 #[derive(serde::Deserialize)]
 /// Configuration for the L1 Controller
 pub struct L1ControllerConfig {
+    /// Enable L1 Controller
+    pub enabled: bool,
+    /// Hurwitz diag determines error convergence rate
     pub hurwitz_diag: [f32;6],
+    /// L1 gains []
     pub adaptation_gain: [f32;6],
+    /// Thrust Low Pass Filter Time Constant
     pub thrust_filt: f32,
+    /// Torque Low Pass Filter Time Constant
     pub torque_filt: f32,
 }
 

@@ -1,4 +1,4 @@
-use nalgebra::{Vector3};
+use nalgebra::Vector3;
 use peng_quad::*;
 /// Main function for the simulation
 fn main() -> Result<(), SimulationError> {
@@ -148,7 +148,7 @@ fn main() -> Result<(), SimulationError> {
             quad.time_step,
         );
         
-        if config.l1_enabled {
+        if config.l1_controller.enabled {
             (thrust, torque) = l1_controller.adapt(
                 &thrust, 
                 &torque,
