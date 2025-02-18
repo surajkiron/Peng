@@ -95,8 +95,10 @@ pub struct PIDControllerConfig {
 #[derive(serde::Deserialize)]
 /// Configuration for the L1 Controller
 pub struct L1ControllerConfig {
-    pub dia: [f32;6],
+    pub hurwitz_diag: [f32;6],
     pub adaptation_gain: [f32;6],
+    pub thrust_filt: f32,
+    pub torque_filt: f32,
 }
 
 #[derive(serde::Deserialize)]

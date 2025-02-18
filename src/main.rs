@@ -1,4 +1,4 @@
-use nalgebra::{Vector3, Vector6};
+use nalgebra::{Vector3};
 use peng_quad::*;
 /// Main function for the simulation
 fn main() -> Result<(), SimulationError> {
@@ -39,12 +39,15 @@ fn main() -> Result<(), SimulationError> {
         config.quadrotor.mass,
         config.quadrotor.gravity,
     );
+    
     let mut l1_controller= L1Controller::new(
         config.quadrotor.mass,
         config.quadrotor.gravity,
         config.quadrotor.inertia_matrix,
-        config.l1_controller.dia,
+        config.l1_controller.hurwitz_diag,
         config.l1_controller.adaptation_gain,
+        config.l1_controller.thrust_filt,
+        config.l1_controller.torque_filt,
         1.0 / config.simulation.simulation_frequency as f32,
     )?;
 
@@ -130,7 +133,7 @@ fn main() -> Result<(), SimulationError> {
             time,
             &maze.obstacles,
         )?;
-        let (thrust, calculated_desired_orientation) = controller.compute_position_control(
+        let (mut thrust, calculated_desired_orientation) = controller.compute_position_control(
             &desired_position,
             &desired_velocity,
             desired_yaw,
@@ -138,20 +141,23 @@ fn main() -> Result<(), SimulationError> {
             &quad.velocity,
             quad.time_step,
         );
-        let torque = controller.compute_attitude_control(
+        let mut torque = controller.compute_attitude_control(
             &calculated_desired_orientation,
             &quad.orientation,
             &quad.angular_velocity,
             quad.time_step,
         );
-        let (mut thrust, mut torque) = l1_controller.adapt(
-            thrust, 
-            &torque,
-            &quad.position,
-            &quad.orientation,
-            &quad.velocity,
-            &quad.angular_velocity, 
-        );
+        
+        if config.l1_enabled {
+            (thrust, torque) = l1_controller.adapt(
+                &thrust, 
+                &torque,
+                &quad.orientation,
+                &quad.velocity,
+                &quad.angular_velocity, 
+            );
+        }
+        
         if i % (config.simulation.simulation_frequency / config.simulation.control_frequency) == 0 {
             if config.use_rk4_for_dynamics_control {
                 quad.update_dynamics_with_controls_rk4(thrust, &torque);
