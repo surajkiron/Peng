@@ -40,11 +40,13 @@ fn main() -> Result<(), SimulationError> {
         config.quadrotor.gravity,
     );
     let mut l1_controller= L1Controller::new(
-        &quad,
+        config.quadrotor.mass,
+        config.quadrotor.gravity,
+        config.quadrotor.inertia_matrix,
         config.l1_controller.dia,
         config.l1_controller.adaptation_gain,
         1.0 / config.simulation.simulation_frequency as f32,
-    );
+    )?;
 
     let mut imu = Imu::new(
         config.imu.accel_noise_std,
@@ -142,7 +144,14 @@ fn main() -> Result<(), SimulationError> {
             &quad.angular_velocity,
             quad.time_step,
         );
-        // let (adapted_thrust, adapted_torque) = l1_controller.adapt(thrust, &torque);
+        let (mut thrust, mut torque) = l1_controller.adapt(
+            thrust, 
+            &torque,
+            &quad.position,
+            &quad.orientation,
+            &quad.velocity,
+            &quad.angular_velocity, 
+        );
         if i % (config.simulation.simulation_frequency / config.simulation.control_frequency) == 0 {
             if config.use_rk4_for_dynamics_control {
                 quad.update_dynamics_with_controls_rk4(thrust, &torque);
