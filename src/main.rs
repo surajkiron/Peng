@@ -39,8 +39,7 @@ fn main() -> Result<(), SimulationError> {
         config.quadrotor.mass,
         config.quadrotor.gravity,
     );
-    
-    let mut l1_controller= L1Controller::new(
+    let mut l1_controller = L1Controller::new(
         config.quadrotor.mass,
         config.quadrotor.gravity,
         config.quadrotor.inertia_matrix,
@@ -147,17 +146,15 @@ fn main() -> Result<(), SimulationError> {
             &quad.angular_velocity,
             quad.time_step,
         );
-        
         if config.l1_controller.enabled {
             (thrust, torque) = l1_controller.adapt(
-                &thrust, 
+                &thrust,
                 &torque,
                 &quad.orientation,
                 &quad.velocity,
-                &quad.angular_velocity, 
+                &quad.angular_velocity,
             );
         }
-        
         if i % (config.simulation.simulation_frequency / config.simulation.control_frequency) == 0 {
             if config.use_rk4_for_dynamics_control {
                 quad.update_dynamics_with_controls_rk4(thrust, &torque);

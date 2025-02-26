@@ -96,9 +96,9 @@ pub struct L1ControllerConfig {
     /// Enable L1 Controller
     pub enabled: bool,
     /// Hurwitz diag determines error convergence rate
-    pub hurwitz_diag: [f32;6],
+    pub hurwitz_diag: [f32; 6],
     /// L1 gains []
-    pub adaptation_gain: [f32;6],
+    pub adaptation_gain: [f32; 6],
     /// Thrust Low Pass Filter Time Constant
     pub thrust_filt: f32,
     /// Torque Low Pass Filter Time Constant

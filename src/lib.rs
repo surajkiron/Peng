@@ -47,7 +47,7 @@ use rayon::prelude::*;
 pub mod config;
 use nalgebra::{
     DMatrix, DVector, Matrix3, Quaternion, Rotation3, SMatrix, SVector, UnitQuaternion, Vector3,
-    Vector4, Vector6, 
+    Vector4, Vector6,
 };
 use osqp::{CscMatrix, Problem, Settings};
 use rand_chacha::ChaCha8Rng;
@@ -700,7 +700,7 @@ impl PIDController {
 /// # Examples
 /// ```
 /// use peng_quad::LowPassFilter;
-/// 
+///
 /// let mut filter = LowPassFilter::new(0.0, 0.5, 1.0);
 /// assert_eq!(filter.update(2.0), 1.0);
 /// ```
@@ -723,7 +723,7 @@ impl LowPassFilter {
     /// # Examples
     /// ```
     /// use peng_quad::LowPassFilter;
-    /// 
+    ///
     /// let filter = LowPassFilter::new(0.0, 0.5, 1.0);
     /// ```
     pub fn new(x_0: f32, tau: f32, dt: f32) -> Self {
@@ -753,26 +753,25 @@ impl LowPassFilter {
     }
 }
 
-
 pub struct L1Controller {
     /// Quadrotor Model Parameters
     mass: f32,
     gravity: f32,
-    inertia_matrix: Matrix3<f32>, 
+    inertia_matrix: Matrix3<f32>,
     inertia_matrix_inv: Matrix3<f32>,
     dt: f32,
     /// Predicted Uncertainties [thrust.z, torque.x, torque.y, torque.z, thrust.y, thrust.z]
     sigma: Vector6<f32>,
     /// Partial state [velocity, angular_velocity]
     predicted_partial_state_z: Vector6<f32>,
-    /// L1 adaptation [thrust.z, torque.x, torque.y, torquez.z]
+    /// L1 adaptation [thrust, torque.x, torque.y, torquez.z]
     u_l1: Vector4<f32>,
     /// Hurwitz matrix drives prediction error to zero exponetially fast
     hurwitz_mat: DMatrix<f32>,
     /// L1 Gains
     adaptation_gain_mat: DMatrix<f32>,
     /// Low Pass Filters
-    thrust_lpf:  LowPassFilter,
+    thrust_lpf: LowPassFilter,
     torquex_lpf: LowPassFilter,
     torquey_lpf: LowPassFilter,
     torquez_lpf: LowPassFilter,
@@ -782,13 +781,12 @@ impl L1Controller {
         mass: f32,
         gravity: f32,
         inertia_matrix: [f32; 9],
-        hurwitz_diag: [f32; 6], 
-        adaptation_gain: [f32; 6], 
+        hurwitz_diag: [f32; 6],
+        adaptation_gain: [f32; 6],
         thrust_filt: f32,
         torque_filt: f32,
-        dt: f32
+        dt: f32,
     ) -> Result<Self, SimulationError> {
-
         let hurwitz_diag_vec = DVector::from_vec(hurwitz_diag.to_vec());
         let adaptation_gain_vec = DVector::from_vec(adaptation_gain.to_vec());
         let inertia_matrix = Matrix3::from_row_slice(&inertia_matrix);
@@ -799,58 +797,64 @@ impl L1Controller {
                     "Failed to invert inertia matrix".to_string(),
                 ))?;
         Ok(Self {
+            dt,
             mass,
             gravity,
             inertia_matrix,
             inertia_matrix_inv,
-            sigma: Vector6::zeros(),
             u_l1: Vector4::zeros(),
+            sigma: Vector6::zeros(),
             predicted_partial_state_z: Vector6::zeros(),
-            hurwitz_mat: DMatrix::from_diagonal(&hurwitz_diag_vec),  // Initialize As with diagonal from dia
-            adaptation_gain_mat: DMatrix::from_diagonal(&adaptation_gain_vec),  
-            dt,
-            thrust_lpf:  LowPassFilter::new(0.0, thrust_filt, dt),
+            hurwitz_mat: DMatrix::from_diagonal(&hurwitz_diag_vec),
+            adaptation_gain_mat: DMatrix::from_diagonal(&adaptation_gain_vec),
+            thrust_lpf: LowPassFilter::new(0.0, thrust_filt, dt),
             torquex_lpf: LowPassFilter::new(0.0, torque_filt, dt),
-            torquey_lpf: LowPassFilter::new(0.0, torque_filt, dt),    
+            torquey_lpf: LowPassFilter::new(0.0, torque_filt, dt),
             torquez_lpf: LowPassFilter::new(0.0, torque_filt, dt),
         })
     }
-
     pub fn adapt(
         &mut self,
-        thrust: &f32,    
+        thrust: &f32,
         torque: &Vector3<f32>,
         current_orientation: &UnitQuaternion<f32>,
-        current_velocity: &Vector3<f32>, 
-        current_angular_velocity:&Vector3<f32>, 
-        ) -> (f32, Vector3<f32>) {
-
+        current_velocity: &Vector3<f32>,
+        current_angular_velocity: &Vector3<f32>,
+    ) -> (f32, Vector3<f32>) {
         // State Predictor
         let current_rotation = current_orientation.to_rotation_matrix();
         let rotation_matrix = current_rotation.matrix();
-        let mut sigma_m = Vector4::new(self.sigma[0],self.sigma[1], self.sigma[2], self.sigma[3]);
+        let mut sigma_m = Vector4::new(self.sigma[0], self.sigma[1], self.sigma[2], self.sigma[3]);
         let sigma_um = DVector::<f32>::from_row_slice(&[self.sigma[4], self.sigma[5]]);
-        let gravity_term = Vector3::new(0.0, 0.0, -self.gravity); 
-        let torque_term = -self.inertia_matrix_inv * current_angular_velocity.cross(&(self.inertia_matrix * current_angular_velocity));
-        let fk = Vector6::new(gravity_term.x, gravity_term.y, gravity_term.z, 
-            torque_term.x, torque_term.y, torque_term.z);
+        let gravity_term = Vector3::new(0.0, 0.0, -self.gravity);
+        let torque_term = -self.inertia_matrix_inv
+            * current_angular_velocity.cross(&(self.inertia_matrix * current_angular_velocity));
+        let fk = Vector6::new(
+            gravity_term.x,
+            gravity_term.y,
+            gravity_term.z,
+            torque_term.x,
+            torque_term.y,
+            torque_term.z,
+        );
         let u = Vector4::new(*thrust, torque.x, torque.y, torque.z);
-        
         // Create zero matrices;
         let mut b = SMatrix::<f32, 6, 4>::zeros();
         let mut b_um = SMatrix::<f32, 6, 2>::zeros();
-        
         let unmodeled_force = (1.0 / self.mass) * rotation_matrix;
-        
         // Fill first three rows of B with third column of unmodeled_force (body z direction)
-        b.fixed_view_mut::<3, 1>(0, 0).copy_from(&unmodeled_force.column(2));
+        b.fixed_view_mut::<3, 1>(0, 0)
+            .copy_from(&unmodeled_force.column(2));
 
         // Fill bottom-right 3x3 block with J_inv
-        b.fixed_view_mut::<3, 3>(3, 1).copy_from(&self.inertia_matrix_inv);
+        b.fixed_view_mut::<3, 3>(3, 1)
+            .copy_from(&self.inertia_matrix_inv);
 
         // Fill B_um with first two columns of unmodeled_force (body x and y directions)
-        b_um.fixed_view_mut::<3, 1>(0, 0).copy_from(&unmodeled_force.column(0));
-        b_um.fixed_view_mut::<3, 1>(0, 1).copy_from(&unmodeled_force.column(1));
+        b_um.fixed_view_mut::<3, 1>(0, 0)
+            .copy_from(&unmodeled_force.column(0));
+        b_um.fixed_view_mut::<3, 1>(0, 1)
+            .copy_from(&unmodeled_force.column(1));
 
         // Concatenate velocity and omega into z
         let partial_state_z = SVector::<f32, 6>::new(
@@ -859,47 +863,58 @@ impl L1Controller {
             current_velocity[2],
             current_angular_velocity[0],
             current_angular_velocity[1],
-            current_angular_velocity[2]
+            current_angular_velocity[2],
         );
 
         // Calculate z_error
         let z_prediction_error = self.predicted_partial_state_z - partial_state_z;
         // Calculate z_update
-        let new_prediction = self.predicted_partial_state_z + (
-            fk + 
-            b * (u + self.u_l1 + sigma_m) + 
-            (b_um * sigma_um) + 
-            &self.hurwitz_mat * z_prediction_error
-        ) * self.dt;
+        let new_prediction = self.predicted_partial_state_z
+            + (fk
+                + b * (u + self.u_l1 + sigma_m)
+                + (b_um * sigma_um)
+                + &self.hurwitz_mat * z_prediction_error)
+                * self.dt;
 
         // Update prediction for next iteration
         self.predicted_partial_state_z = new_prediction;
 
         // L1 Adaptation
         let mut gk_inv_ = SMatrix::<f32, 6, 6>::zeros();
-        let mx = self.mass * rotation_matrix;   
+        let mx = self.mass * rotation_matrix;
 
         // Set the values for gk_inv_ using fixed_view_mut to access sub-blocks
-        gk_inv_.fixed_view_mut::<1, 3>(0, 0).copy_from(&mx.column(2).transpose()); 
-        gk_inv_.fixed_view_mut::<1, 3>(4, 0).copy_from(&mx.column(0).transpose()); 
-        gk_inv_.fixed_view_mut::<1, 3>(5, 0).copy_from(&mx.column(1).transpose()); 
+        gk_inv_
+            .fixed_view_mut::<1, 3>(0, 0)
+            .copy_from(&mx.column(2).transpose());
+        gk_inv_
+            .fixed_view_mut::<1, 3>(4, 0)
+            .copy_from(&mx.column(0).transpose());
+        gk_inv_
+            .fixed_view_mut::<1, 3>(5, 0)
+            .copy_from(&mx.column(1).transpose());
 
         // Assigning parts of inertia matrix to the corresponding parts of gk_inv_
-        gk_inv_.fixed_view_mut::<3, 1>(1, 3).copy_from(&self.inertia_matrix.column(0)); 
-        gk_inv_.fixed_view_mut::<3, 1>(1, 4).copy_from(&self.inertia_matrix.column(1)); 
-        gk_inv_.fixed_view_mut::<3, 1>(1, 5).copy_from(&self.inertia_matrix.column(2));  
+        gk_inv_
+            .fixed_view_mut::<3, 1>(1, 3)
+            .copy_from(&self.inertia_matrix.column(0));
+        gk_inv_
+            .fixed_view_mut::<3, 1>(1, 4)
+            .copy_from(&self.inertia_matrix.column(1));
+        gk_inv_
+            .fixed_view_mut::<3, 1>(1, 5)
+            .copy_from(&self.inertia_matrix.column(2));
 
-        self.sigma = - gk_inv_ * &self.adaptation_gain_mat * (new_prediction-partial_state_z);
+        self.sigma = -gk_inv_ * &self.adaptation_gain_mat * (new_prediction - partial_state_z);
         sigma_m = Vector4::new(
             self.thrust_lpf.update(self.sigma[0]).expect("REASON"),
             self.torquex_lpf.update(self.sigma[1]).expect("REASON"),
             self.torquey_lpf.update(self.sigma[2]).expect("REASON"),
             self.torquez_lpf.update(self.sigma[3]).expect("REASON"),
-        ); 
+        );
         self.u_l1 = -sigma_m;
-        
         let control_thrust: f32 = thrust + self.u_l1[0];
-        let control_torque= Vector3::new(
+        let control_torque = Vector3::new(
             torque[0] + self.u_l1[1],
             torque[1] + self.u_l1[2],
             torque[2] + self.u_l1[3],
